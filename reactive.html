@@ -1,0 +1,89 @@
+<script>
+let activeEffect
+// collect dependencies
+class Dep {
+    subscribers = new Set()
+    depend() {
+        if (activeEffect) {
+            this.subscribers.add(activeEffect)
+        }
+    }
+    notify() {
+        this.subscribers.forEach(effect => {
+            effect()
+        })
+    }
+}
+
+// tracking dependencied
+function watchEffect(effect) {
+    activeEffect = effect
+    effect()
+    activeEffect = null
+}
+
+const targetMap = new WeakMap() // weakmap用对象做key，并且当对象key被垃圾回收时，其对应的值也会被垃圾回收
+
+function getDep(target, key) {
+    let depsMap = targetMap.get(target)
+    if (!depsMap) {
+        depsMap = new Map()
+        targetMap.set(target, depsMap)
+    }
+    // 每个响应式属性值关联一个dep实例
+    let dep = depsMap.get(key)
+    if (!dep) {
+        dep = new Dep()
+        depsMap.set(key, dep)
+    }
+    return dep
+}
+
+const reactiveHandlers = {
+    get(target, key, receiver) {
+        const dep = getDep(target, key)
+        dep.depend()
+        return Reflect.get(target, key, receiver)
+    },
+    set(target, key, value, receiver) {
+        const dep = getDep(target, key)
+        const result = Reflect.set(target, key, value, receiver)
+        dep.notify()
+        return result
+    }
+}
+// 在响应式实现的内部，因为值在对象上，Dep类不再需要跟踪它自己的值，所以上面把dep内存值和getter/setter的逻辑都删了，只保留发布订阅effect的逻辑
+function reactive(raw) {
+    // vue2的响应式实现
+    // Object.keys(raw).forEach(key => {
+    //     const dep = new Dep()
+    //     let value = raw[key]
+
+    //     Object.defineProperty(raw, key, {
+    //         get() {
+    //             dep.depend()
+    //             return value
+    //         },
+    //         set(newValue) {
+    //             value = newValue
+    //             dep.notify()
+    //         }
+    //     })
+    // })
+    // return raw
+
+    // vue3使用es6提供的代理
+    return new Proxy(raw, reactiveHandlers)
+}
+
+
+const state = reactive({
+    count: 0
+})
+
+watchEffect(() => {
+    console.log(state.count)
+})
+
+state.count++
+</script>
