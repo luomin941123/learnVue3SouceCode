@@ -1,0 +1,195 @@
+<div id="app"></div>
+
+<script>
+// vdom
+function h(tag, props, children) {
+    return {
+        tag,
+        props,
+        children
+    }
+}
+
+// 对于要构建的应用程序，最初的挂载就是创造一些之前没有的东西
+function mount(vnode, container) {
+    // 1、创建真实dom并存储到vnode上，保证patch的时候可以知道要更新的真实dom
+    const el = vnode.el = document.createElement(vnode.tag)
+    // 2、处理prop,检查并将其放到元素上作为property或者attribute
+    if (vnode.props) {
+        for (const key in vnode.props) {
+            // 简单起见，将props都作为attribute
+            const value = vnode.props[key]
+            if (key.startsWith('on')) {
+                el.addEventListener(key.slice(2).toLowerCase(), value)
+            } else {
+                el.setAttribute(key, value)
+            }
+        }
+    }
+    // 3、处理children，简单起见，假设children都是数组
+    if (vnode.children) {
+        if (typeof vnode.children === 'string') {
+            el.textContent = vnode.children
+        } else {
+            vnode.children.forEach(child => {
+                mount(child, el)
+            })
+        }
+    }
+    // 4、将创建的真实dom放入要挂载的容器
+    container.appendChild(el)
+
+}
+
+// 挂载之后的更新，希望能尽可能多地重用，所以之后只是修改其中的内容，而不是重建
+// n1:旧vnode  n2:新vnode
+function patch(n1, n2) {
+    if (n1.tag === n2.tag) {
+        const el = n2.el = n1.el
+        // props
+        const oldProps = n1.props || {}
+        const newProps = n2.props || {}
+        for (const key in newProps) {
+            const oldValue = oldProps[key]
+            const newValue = newProps[key]
+            if (newValue !== oldValue) {
+                el.setAttribute(key, newValue)
+            }
+        }
+        for (const key in oldProps) {
+            if (!(key in newProps)) {
+                el.removeAttribute(key)
+            }
+        }
+        
+
+        //children
+        const oldChildren = n1.children
+        const newChildren = n2.children
+        if (typeof newChildren === 'string') {
+            if (typeof oldChildren === 'string') {
+                if (newChildren !== oldChildren) {
+                    el.textContent = newChildren
+                }
+            } else {
+                el.textContent = newChildren
+            }
+        } else {
+            if (typeof oldChildren === 'string') {
+                el.innerHTML = ''
+                newChildren.forEach(child => {
+                    mount(child, el)
+                })
+            } else {
+                const commonLength = Math.min(oldChildren.length, newChildren.length)
+                for(let i = 0; i < commonLength; i++) {
+                    patch(oldChildren[i], newChildren[i])
+                }
+                if (newChildren.length > oldChildren.length) {
+                    newChildren.slice(oldChildren.length).forEach(child => {
+                        mount(child, el)
+                    })
+                } else if (newChildren.length < oldChildren.length) {
+                    oldChildren.slice(newChildren.length).forEach(child => {
+                        el.removeChild(child.el)
+                    })
+                }
+            }
+        }
+    } else {
+        // different tag, replace
+    }
+}
+
+// reactive
+let activeEffect
+// collect dependencies
+class Dep {
+    subscribers = new Set()
+    depend() {
+        if (activeEffect) {
+            this.subscribers.add(activeEffect)
+        }
+    }
+    notify() {
+        this.subscribers.forEach(effect => {
+            effect()
+        })
+    }
+}
+
+// tracking dependencied
+function watchEffect(effect) {
+    activeEffect = effect
+    effect()
+    activeEffect = null
+}
+
+const targetMap = new WeakMap() // weakmap用对象做key，并且当对象key被垃圾回收时，其对应的值也会被垃圾回收
+
+function getDep(target, key) {
+    let depsMap = targetMap.get(target)
+    if (!depsMap) {
+        depsMap = new Map()
+        targetMap.set(target, depsMap)
+    }
+    // 每个响应式属性值关联一个dep实例
+    let dep = depsMap.get(key)
+    if (!dep) {
+        dep = new Dep()
+        depsMap.set(key, dep)
+    }
+    return dep
+}
+
+const reactiveHandlers = {
+    get(target, key, receiver) {
+        const dep = getDep(target, key)
+        dep.depend()
+        return Reflect.get(target, key, receiver)
+    },
+    set(target, key, value, receiver) {
+        const dep = getDep(target, key)
+        const result = Reflect.set(target, key, value, receiver)
+        dep.notify()
+        return result
+    }
+}
+// 在响应式实现的内部，因为值在对象上，Dep类不再需要跟踪它自己的值，所以上面把dep内存值和getter/setter的逻辑都删了，只保留发布订阅effect的逻辑
+function reactive(raw) {
+    // vue3使用es6提供的代理
+    return new Proxy(raw, reactiveHandlers)
+}
+
+// practise
+const App = {
+    data: reactive({
+        count: 0
+    }),
+    render() {
+        return h('div', {
+            onClick: () => {
+                this.data.count++
+            }
+        }, String(this.data.count))
+    }
+}
+
+function mountApp(component, container) {
+    let isMounted = false
+    let prevVdom
+    watchEffect(() => {
+        if (!isMounted) {
+            prevVdom = component.render()
+            mount(prevVdom, container)
+            isMounted = true
+        } else {
+            const newVdom = component.render()
+            patch(prevVdom, newVdom)
+            prevVdom = newVdom
+        }
+    })
+}
+
+mountApp(App, document.getElementById('app'))
+</script>
